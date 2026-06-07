@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react'
 import { GameState, SaveData, Toast, CollectedFossil, ToolType } from '../types'
 import { getSaves, createSave, updateSave, getSave } from '../utils/db'
 import { checkAchievements } from '../data/achievements'
@@ -42,6 +42,9 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [highlightedEra, setHighlightedEra] = useState<string | null>(null)
   const [isTimelineAnimating, setIsTimelineAnimating] = useState(false)
 
+  const toastsRef = useRef(toasts)
+  toastsRef.current = toasts
+
   const gameState = currentSave?.gameState || {
     currentSaveId: '',
     totalDigs: 0,
@@ -51,13 +54,22 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     discoveredEras: []
   }
 
+  const addToast = useCallback((toast: Omit<Toast, 'id'>) => {
+    const id = `toast_${Date.now()}_${Math.random()}`
+    setToasts(prev => [...prev, { ...toast, id }])
+    
+    setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id))
+    }, toast.duration)
+  }, [])
+
   const loadSaves = useCallback(async () => {
     const loadedSaves = await getSaves()
     setSaves(loadedSaves)
-    if (loadedSaves.length > 0 && !currentSave) {
-      setCurrentSave(loadedSaves[0])
+    if (loadedSaves.length > 0) {
+      setCurrentSave(prev => prev || loadedSaves[0])
     }
-  }, [currentSave])
+  }, [])
 
   const createNewSave = useCallback(async (name: string) => {
     const newSave = await createSave(name)
@@ -83,58 +95,59 @@ export const GameProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       })
     })
     return newAchievements.map(a => a.id)
-  }, [])
+  }, [addToast])
 
   const addDig = useCallback((toolType: ToolType) => {
-    if (!currentSave) return
+    setCurrentSave(prev => {
+      if (!prev) return prev
 
-    const newState = { ...currentSave.gameState }
-    newState.totalDigs += 1
-    if (toolType === 'brush') {
-      newState.brushUses += 1
-    }
+      const newState: GameState = {
+        ...prev.gameState,
+        totalDigs: prev.gameState.totalDigs + 1,
+        brushUses: toolType === 'brush' ? prev.gameState.brushUses + 1 : prev.gameState.brushUses
+      }
 
-    const newAchievements = checkAndUnlockAchievements(newState)
-    if (newAchievements.length > 0) {
-      newState.unlockedAchievements = [...newState.unlockedAchievements, ...newAchievements]
-    }
+      const newAchievements = checkAndUnlockAchievements(newState)
+      if (newAchievements.length > 0) {
+        newState.unlockedAchievements = [...newState.unlockedAchievements, ...newAchievements]
+      }
 
-    const updatedSave = { ...currentSave, gameState: newState }
-    setCurrentSave(updatedSave)
-    updateSave(updatedSave)
-  }, [currentSave, checkAndUnlockAchievements])
+      const updatedSave = { ...prev, gameState: newState, updatedAt: Date.now() }
+      updateSave(updatedSave)
+      return updatedSave
+    })
+  }, [checkAndUnlockAchievements])
 
   const collectFossil = useCallback((fossil: CollectedFossil) => {
-    if (!currentSave) return
+    setCurrentSave(prev => {
+      if (!prev) return prev
 
-    const newState = { ...currentSave.gameState }
-    const exists = newState.collectedFossils.some(f => f.fossilId === fossil.fossilId)
-    
-    if (!exists) {
-      newState.collectedFossils.push(fossil)
-      if (!newState.discoveredEras.includes(fossil.eraId)) {
-        newState.discoveredEras.push(fossil.eraId)
+      const exists = prev.gameState.collectedFossils.some(f => f.fossilId === fossil.fossilId)
+      
+      const newCollectedFossils = exists 
+        ? [...prev.gameState.collectedFossils]
+        : [...prev.gameState.collectedFossils, fossil]
+      
+      const newDiscoveredEras = !exists && !prev.gameState.discoveredEras.includes(fossil.eraId)
+        ? [...prev.gameState.discoveredEras, fossil.eraId]
+        : [...prev.gameState.discoveredEras]
+
+      const newState: GameState = {
+        ...prev.gameState,
+        collectedFossils: newCollectedFossils,
+        discoveredEras: newDiscoveredEras
       }
-    }
 
-    const newAchievements = checkAndUnlockAchievements(newState)
-    if (newAchievements.length > 0) {
-      newState.unlockedAchievements = [...newState.unlockedAchievements, ...newAchievements]
-    }
+      const newAchievements = checkAndUnlockAchievements(newState)
+      if (newAchievements.length > 0) {
+        newState.unlockedAchievements = [...newState.unlockedAchievements, ...newAchievements]
+      }
 
-    const updatedSave = { ...currentSave, gameState: newState }
-    setCurrentSave(updatedSave)
-    updateSave(updatedSave)
-  }, [currentSave, checkAndUnlockAchievements])
-
-  const addToast = useCallback((toast: Omit<Toast, 'id'>) => {
-    const id = `toast_${Date.now()}_${Math.random()}`
-    setToasts(prev => [...prev, { ...toast, id }])
-    
-    setTimeout(() => {
-      setToasts(prev => prev.filter(t => t.id !== id))
-    }, toast.duration)
-  }, [])
+      const updatedSave = { ...prev, gameState: newState, updatedAt: Date.now() }
+      updateSave(updatedSave)
+      return updatedSave
+    })
+  }, [checkAndUnlockAchievements])
 
   const removeToast = useCallback((id: string) => {
     setToasts(prev => prev.filter(t => t.id !== id))

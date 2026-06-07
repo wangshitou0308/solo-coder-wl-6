@@ -13,6 +13,8 @@ const AppContent: React.FC = () => {
   useEffect(() => {
     if (saves.length === 0) {
       setShowWelcome(true)
+    } else {
+      setShowWelcome(false)
     }
   }, [saves.length])
 
